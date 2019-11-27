@@ -161,8 +161,7 @@ fn lastp1(v : & Vec<usize>) -> usize {
 fn intersect(target : &mut Vec<usize>, v : &Vec<usize>, u : &BitVec) {
     target.clear();
     for index in v.iter() {
-        let t = u[*index];
-        if t {
+        if u[*index] {
             target.push(*index);
         }
     }
