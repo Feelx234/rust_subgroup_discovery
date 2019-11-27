@@ -7,35 +7,42 @@ use ndarray_npy::read_npy;
 use std::time::Instant;
 
 use std::collections::BTreeMap;
+
+use bit_vec::BitVec;
 trait QualityFunction {
-    fn evaluate(&self, subgroup: &Vec<bool>) -> (f32, f32, u32);
+    fn evaluate(&self, subgroup: &Vec<usize>) -> (f64, f64, u32);
 }
 
 struct Task {
-    search_space : Vec<Vec<bool>>,
+    search_space : Vec<BitVec>,
     depth : usize,
     result_size : usize,
-    min_quality : OrderedFloat<f32>,
+    min_quality : OrderedFloat<f64>,
 }
-
+use std::env;
 fn main(){
-    let arr: Array2<bool> = match read_npy("E:/tmp/arr.npy"){
-        Err(e) => {println!("{:?}",e); return ()},
+    let args: Vec<String> = env::args().collect();
+    //let query = &args[1];
+    //let filename = &args[2];
+
+    let arr: Array2<bool> = match read_npy(&args[1]){
+        Err(e) => {println!("{:?}", e); return ()},
         Ok(f) => f,
         };
 
-    let target_values_arr : Array1<f32> = match read_npy("E:/tmp/target.npy"){
-            Err(e) => {println!("{:?}",e); return ()},
+    let target_values_arr : Array1<f64> = match read_npy(&args[2]){
+            Err(e) => {println!("{:?}", e); return ()},
             Ok(f) => f,
             };
-    let mut target_values : Vec<f32> = Vec::new();
+    let mut target_values : Vec<f64> = Vec::new();
     for x in target_values_arr.iter(){
         target_values.push(*x);
     }
-    let mut search_space : Vec<Vec<bool>> = Vec::new();
+    //println!("{:?}",target_values);
+    let mut search_space : Vec<BitVec> = Vec::new();
 
     for axis in arr.axis_iter(ndarray::Axis(0)) {
-        let mut new_vec : Vec<bool> = Vec::new();
+        let mut new_vec : BitVec = BitVec::new();
         for x in axis.iter() {
             new_vec.push(*x);
         }
@@ -50,14 +57,17 @@ fn main(){
     };
     println!("dataset size: {:?}", dataset_size);
     let depth = 5;
-    let min_quality : OrderedFloat<f32> = OrderedFloat(0.0);
+    let min_quality : OrderedFloat<f64> = OrderedFloat(0.0);
     let task = Task{ search_space: search_space, depth: depth, result_size: 10, min_quality: min_quality };
-    let mut result : BTreeMap<OrderedFloat<f32>, Vec<usize>> = BTreeMap::new();
-    let base_sg = vec![true; dataset_size];
+    let mut result : BTreeMap<OrderedFloat<f64>, Vec<usize>> = BTreeMap::new();
+    let mut base_sg  : Vec<usize> = Vec::new();//BitVec::from_elem(dataset_size, true);
+    for i in 0..dataset_size {
+        base_sg.push(i)
+    }
     let prefix : Vec<usize> = Vec::new();
     let now = Instant::now();
     let dataset_mean = StandardQFNumeric::mean(&target_values);
-    let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:0.5};
+    let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:1.0};
     recurse(&prefix, &base_sg, &qf, &task, &mut result);
     println!("time = {}", now.elapsed().as_millis());
     println!("{:?}", result);
@@ -68,48 +78,46 @@ fn main(){
 }
 
 struct StandardQFNumeric {
-    target_values : Vec<f32>,
-    dataset_mean : f32,
-    a : f32,
+    target_values : Vec<f64>,
+    dataset_mean : f64,
+    a : f64,
 }
 
 impl QualityFunction for StandardQFNumeric {
-    fn evaluate(&self, subgroup: & Vec<bool>) -> (f32, f32, u32) {
+    fn evaluate(&self, subgroup: & Vec<usize>) -> (f64, f64, u32) {
         let mut cumsum = 0.0;
         let mut count = 0;
-        let mut max : f32 = 10.0;
-        max=max.powf( 10.0);
-        let mut quality = 0.0;
-        for i in 0..subgroup.len() {
-        //for (is_in_subgroup, value)  in subgroup.iter().zip(self.target_values.iter()) {
-            if subgroup[i] {
-                cumsum += self.target_values[i];
-                count += 1;
-                quality = (count as f32).powf(self.a) * (cumsum/(count as f32) - self.dataset_mean);
-                if quality > max {
-                    max = quality;
-                }
+        let mut max : f64 = - (10.0 as f64) .powf( 10.0);
+        let mut quality : f64 = 0.0;
+        //assert_eq!(subgroup.len(),self.target_values.len());
+        for i in subgroup {
+            cumsum += self.target_values[*i];
+            count += 1;
+            quality = (count as f64).powf(self.a) * (cumsum/(count as f64) - self.dataset_mean);
+            if quality > max {
+                max = quality;
             }
         }
+
         return (quality, max, count);
     }
 }
 
 impl StandardQFNumeric {
-    fn mean(target_values : & Vec<f32>) -> f32 {
-        let mut cumsum : f32 = 0.0;
-        for value  in target_values.iter() {
+    fn mean(target_values : & Vec<f64>) -> f64 {
+        let mut cumsum : f64 = 0.0;
+        for value  in target_values {
             cumsum += value;
         }
-        return cumsum / (target_values.len() as f32)
+        return cumsum / (target_values.len() as f64)
     }
 }
 
 fn recurse(prefix : & Vec<usize> ,
-            sg : & Vec<bool> ,
+            sg : & Vec<usize> ,
             qf : & impl QualityFunction,
             task :  & Task,
-            result: &mut BTreeMap<OrderedFloat<f32>, Vec<usize>>) {
+            result: &mut BTreeMap<OrderedFloat<f64>, Vec<usize>>) {
     let (quality, optimistic_estimate, size) = qf.evaluate(sg);
     if size == 0 { 
         return}
@@ -127,11 +135,17 @@ fn recurse(prefix : & Vec<usize> ,
     }
     if prefix.len() < task.depth {
         if ord_estimate > min_quality {
+            let mut new_prefix = prefix.clone();
+            let mut new_sg = sg.clone();
             for i in lastp1(prefix) .. task.search_space.len() {
-                let mut new_prefix = prefix.clone();
                 new_prefix.push(i);
-                let new_sg = logical_and(sg, &task.search_space[i]);
+                
+                //new_sg.set_all();
+                //new_sg.intersect(&sg);
+                //new_sg.intersect(&task.search_space[i]);
+                intersect(&mut new_sg, sg, &task.search_space[i]);
                 recurse(& new_prefix, & new_sg, qf, task, result);
+                new_prefix.pop();
             }
         }
     }
@@ -144,25 +158,13 @@ fn lastp1(v : & Vec<usize>) -> usize {
     }
 }
 
-fn logical_and(v1 : & Vec<bool>, v2: & Vec<bool>) -> Vec<bool> {
-    assert_eq!(v1.len(),v2.len());
-    let mut new_vec : Vec<bool> = vec![false; v1.len()];
-    //let mut val = false;
-    /*for (target, (b1, b2)) in new_vec.iter_mut().zip(v1.iter().zip(v2.iter())) {
-        let val = *b1 && *b2;
-        if val {
-            *target = val;
-        }
-    }*/
-    for i in 0..v1.len()
-    {
-        let val = v1[i] && v2[i];
-        if val {
-            new_vec[i] = val;
+fn intersect(target : &mut Vec<usize>, v : &Vec<usize>, u : &BitVec) {
+    target.clear();
+    for index in v.iter() {
+        let t = u[*index];
+        if t {
+            target.push(*index);
         }
     }
 
-    //return  v1.iter().zip(v2.iter()).map(|(x, y)| *x && *y).to_vec()
-    return new_vec
 }
-
