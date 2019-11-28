@@ -69,7 +69,7 @@ fn main(){
     dbg!(dataset_mean);
     let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:1.0};
     let mut prefix : Vec<usize> = Vec::with_capacity(task.depth);
-    recurse(&mut prefix, &base_sg, &qf, &task, &mut result);
+    DFS(&mut prefix, &base_sg, &qf, &task, &mut result);
     println!("time = {}", now.elapsed().as_millis());
     println!("{:?}", result);
     println!("dataset mean: {:?}", dataset_mean);
@@ -94,11 +94,11 @@ struct StandardQFNumeric<T : Default + AddAssign> {
     a : f64,
 }
 trait QualityFunction {
-    fn evaluate(&self, subgroup: &Vec<usize>, max : f64) -> (f64, f64, usize);
+    fn evaluate(&self, subgroup: &Vec<usize>, max : f64) -> (f64, f64);
 }
 
 impl<T : Default + AddAssign + Into<f64> +Copy+ Div<Output=T>> QualityFunction for StandardQFNumeric<T> {
-    fn evaluate(&self, subgroup: & Vec<usize>, max : f64) -> (f64, f64, usize) {
+    fn evaluate(&self, subgroup: & Vec<usize>, max : f64) -> (f64, f64) {
         let mut cumsum : f64 = 0.0;
         let mut count = 0;
         //let mut max : f64 = - (10.0 as f64) .powf( 10.0);
@@ -117,7 +117,7 @@ impl<T : Default + AddAssign + Into<f64> +Copy+ Div<Output=T>> QualityFunction f
             count += 1;
         };
 
-        return ((count as f64).powf(self.a) * (cumsum / (count as f64) - self.dataset_mean), quality, count);
+        return ((count as f64).powf(self.a) * (cumsum / (count as f64) - self.dataset_mean), quality);
     }
 }
 
@@ -131,7 +131,11 @@ impl  <T : Default + AddAssign + Into<f64> + Copy + Div<Output=T> + std::fmt::De
     }
 }
 
-fn recurse(prefix : &mut Vec<usize> ,
+
+
+
+
+fn DFS(prefix : &mut Vec<usize> ,
             sg : & Vec<usize> ,
             qf : & impl QualityFunction,
             task :  & Task,
@@ -142,7 +146,7 @@ fn recurse(prefix : &mut Vec<usize> ,
         None =>  task.min_quality,
         Some(qual) => *qual
     };
-    let (quality, optimistic_estimate, size) = qf.evaluate(sg, min_quality.into());
+    let (quality, optimistic_estimate) = qf.evaluate(sg, min_quality.into());
 
     let ord_quality = OrderedFloat(quality);
     let ord_estimate = OrderedFloat(optimistic_estimate);
@@ -164,7 +168,7 @@ fn recurse(prefix : &mut Vec<usize> ,
                 //new_sg.intersect(&sg);
                 //new_sg.intersect(&task.search_space[i]);
                 intersect(&mut new_sg, sg, &task.search_space[i]);
-                recurse( prefix, & new_sg, qf, task, result);
+                DFS( prefix, & new_sg, qf, task, result);
                 prefix.pop();
             }
         }
@@ -180,7 +184,7 @@ fn lastp1(v : & Vec<usize>) -> usize {
 
 fn intersect(target : &mut Vec<usize>, v : &Vec<usize>, u : &BitVec) {
     target.clear();
-    for index in v.iter() {
+    for index in v {
         if u[*index] {
             target.push(*index);
         }
