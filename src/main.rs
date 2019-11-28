@@ -9,9 +9,7 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use bit_vec::BitVec;
-trait QualityFunction {
-    fn evaluate(&self, subgroup: &Vec<usize>) -> (f64, f64, u32);
-}
+
 
 struct Task {
     search_space : Vec<BitVec>,
@@ -20,6 +18,7 @@ struct Task {
     min_quality : OrderedFloat<f64>,
 }
 use std::env;
+
 fn main(){
     let args: Vec<String> = env::args().collect();
     //let query = &args[1];
@@ -29,12 +28,12 @@ fn main(){
         Err(e) => {println!("{:?}", e); return ()},
         Ok(f) => f,
         };
-
-    let target_values_arr : Array1<f64> = match read_npy(&args[2]){
+    type target_type = u16;
+    let target_values_arr : Array1<target_type> = match read_npy(&args[2]){
             Err(e) => {println!("{:?}", e); return ()},
             Ok(f) => f,
             };
-    let mut target_values : Vec<f64> = Vec::new();
+    let mut target_values : Vec<target_type> = Vec::new();
     for x in target_values_arr.iter(){
         target_values.push(*x);
     }
@@ -64,11 +63,13 @@ fn main(){
     for i in 0..dataset_size {
         base_sg.push(i)
     }
-    let prefix : Vec<usize> = Vec::new();
+
     let now = Instant::now();
     let dataset_mean = StandardQFNumeric::mean(&target_values);
+    dbg!(dataset_mean);
     let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:1.0};
-    recurse(&prefix, &base_sg, &qf, &task, &mut result);
+    let mut prefix : Vec<usize> = Vec::with_capacity(task.depth);
+    recurse(&mut prefix, &base_sg, &qf, &task, &mut result);
     println!("time = {}", now.elapsed().as_millis());
     println!("{:?}", result);
     println!("dataset mean: {:?}", dataset_mean);
@@ -77,56 +78,75 @@ fn main(){
     //println!("{:?}", z);
 }
 
-struct StandardQFNumeric {
-    target_values : Vec<f64>,
+
+
+
+
+
+
+
+
+use std::ops::{AddAssign, Div};
+
+struct StandardQFNumeric<T : Default + AddAssign> {
+    target_values : Vec<T>,
     dataset_mean : f64,
     a : f64,
 }
+trait QualityFunction {
+    fn evaluate(&self, subgroup: &Vec<usize>, max : f64) -> (f64, f64, usize);
+}
 
-impl QualityFunction for StandardQFNumeric {
-    fn evaluate(&self, subgroup: & Vec<usize>) -> (f64, f64, u32) {
-        let mut cumsum = 0.0;
+impl<T : Default + AddAssign + Into<f64> +Copy+ Div<Output=T>> QualityFunction for StandardQFNumeric<T> {
+    fn evaluate(&self, subgroup: & Vec<usize>, max : f64) -> (f64, f64, usize) {
+        let mut cumsum : f64 = 0.0;
         let mut count = 0;
-        let mut max : f64 = - (10.0 as f64) .powf( 10.0);
+        //let mut max : f64 = - (10.0 as f64) .powf( 10.0);
         let mut quality : f64 = 0.0;
         //assert_eq!(subgroup.len(),self.target_values.len());
         for i in subgroup {
-            cumsum += self.target_values[*i];
+            cumsum += self.target_values[*i].into();
             count += 1;
-            quality = (count as f64).powf(self.a) * (cumsum/(count as f64) - self.dataset_mean);
+            quality = (count as f64).powf(self.a) * (cumsum / (count as f64) - self.dataset_mean);
             if quality > max {
-                max = quality;
+                break
             }
         }
+        while count < subgroup.len(){
+            cumsum += self.target_values[subgroup[count]].into();
+            count += 1;
+        };
 
-        return (quality, max, count);
+        return ((count as f64).powf(self.a) * (cumsum / (count as f64) - self.dataset_mean), quality, count);
     }
 }
 
-impl StandardQFNumeric {
-    fn mean(target_values : & Vec<f64>) -> f64 {
+impl  <T : Default + AddAssign + Into<f64> + Copy + Div<Output=T> + std::fmt::Debug> StandardQFNumeric<T>  {
+    fn mean(target_values : & Vec<T>) -> f64 {
         let mut cumsum : f64 = 0.0;
-        for value  in target_values {
-            cumsum += value;
+        for value in target_values {
+            cumsum += (*value).into();
         }
         return cumsum / (target_values.len() as f64)
     }
 }
 
-fn recurse(prefix : & Vec<usize> ,
+fn recurse(prefix : &mut Vec<usize> ,
             sg : & Vec<usize> ,
             qf : & impl QualityFunction,
             task :  & Task,
             result: &mut BTreeMap<OrderedFloat<f64>, Vec<usize>>) {
-    let (quality, optimistic_estimate, size) = qf.evaluate(sg);
-    if size == 0 { 
+    if sg.len() == 0 { 
         return}
-    let ord_quality = OrderedFloat(quality);
-    let ord_estimate = OrderedFloat(optimistic_estimate);
     let min_quality = match result.keys().next() {
         None =>  task.min_quality,
         Some(qual) => *qual
     };
+    let (quality, optimistic_estimate, size) = qf.evaluate(sg, min_quality.into());
+
+    let ord_quality = OrderedFloat(quality);
+    let ord_estimate = OrderedFloat(optimistic_estimate);
+
     if ord_quality > min_quality {
         if result.len() >= task.result_size {
             result.remove(&min_quality);
@@ -135,17 +155,17 @@ fn recurse(prefix : & Vec<usize> ,
     }
     if prefix.len() < task.depth {
         if ord_estimate > min_quality {
-            let mut new_prefix = prefix.clone();
-            let mut new_sg = sg.clone();
+            //let mut new_prefix = prefix.clone();
+            let mut new_sg : Vec <usize> = Vec::with_capacity(sg.len());
             for i in lastp1(prefix) .. task.search_space.len() {
-                new_prefix.push(i);
+                prefix.push(i);
                 
                 //new_sg.set_all();
                 //new_sg.intersect(&sg);
                 //new_sg.intersect(&task.search_space[i]);
                 intersect(&mut new_sg, sg, &task.search_space[i]);
-                recurse(& new_prefix, & new_sg, qf, task, result);
-                new_prefix.pop();
+                recurse( prefix, & new_sg, qf, task, result);
+                prefix.pop();
             }
         }
     }
