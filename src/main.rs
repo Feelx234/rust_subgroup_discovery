@@ -64,13 +64,17 @@ fn main(){
         base_sg.push(i)
     }
 
-    let now = Instant::now();
+    
     let dataset_mean = StandardQFNumeric::mean(&target_values);
     dbg!(dataset_mean);
-    let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:1.0};
+    let qf = StandardQFNumeric{target_values: target_values, dataset_mean: dataset_mean ,a:0.5};
     let mut prefix : Vec<usize> = Vec::with_capacity(task.depth);
-    DFS(&mut prefix, &base_sg, &qf, &task, &mut result);
+    let mut calls :usize = 0;
+    let now = Instant::now();
+    DFS(&mut prefix, &base_sg, &qf, &task, &mut result, &mut calls);
+    
     println!("time = {}", now.elapsed().as_millis());
+    dbg!(calls);
     println!("{:?}", result);
     println!("dataset mean: {:?}", dataset_mean);
 
@@ -107,9 +111,11 @@ impl<T : Default + AddAssign + Into<f64> +Copy+ Div<Output=T>> QualityFunction f
         for i in subgroup {
             cumsum += self.target_values[*i].into();
             count += 1;
-            quality = (count as f64).powf(self.a) * (cumsum / (count as f64) - self.dataset_mean);
-            if quality > max {
-                break
+            if count > 10 {
+                quality = (count as f64).powf(self.a - 1.0) * (cumsum  - self.dataset_mean * (count as f64));
+                if quality > max{
+                    break
+                }
             }
         }
         while count < subgroup.len(){
@@ -139,13 +145,15 @@ fn DFS(prefix : &mut Vec<usize> ,
             sg : & Vec<usize> ,
             qf : & impl QualityFunction,
             task :  & Task,
-            result: &mut BTreeMap<OrderedFloat<f64>, Vec<usize>>) {
+            result: &mut BTreeMap<OrderedFloat<f64>, Vec<usize>>,
+            calls : &mut usize) {
     if sg.len() == 0 { 
         return}
     let min_quality = match result.keys().next() {
         None =>  task.min_quality,
         Some(qual) => *qual
     };
+    *calls+=1;
     let (quality, optimistic_estimate) = qf.evaluate(sg, min_quality.into());
 
     let ord_quality = OrderedFloat(quality);
@@ -168,12 +176,29 @@ fn DFS(prefix : &mut Vec<usize> ,
                 //new_sg.intersect(&sg);
                 //new_sg.intersect(&task.search_space[i]);
                 intersect(&mut new_sg, sg, &task.search_space[i]);
-                DFS( prefix, & new_sg, qf, task, result);
+                DFS( prefix, & new_sg, qf, task, result, calls);
                 prefix.pop();
             }
         }
     }
 }
+
+
+
+fn Apriori(qf : & impl QualityFunction,
+    task :  & Task,
+    result: &mut BTreeMap<OrderedFloat<f64>, Vec<usize>>) {
+        let mut candidates : Vec<Vec<usize>> = Vec::new();
+        for i in 0..task.search_space.len() {
+            candidates.push(vec![i])
+        }
+
+        for d in 1..task.depth {
+            
+        }
+    }
+
+
 
 fn lastp1(v : & Vec<usize>) -> usize {
     match v.last() {
